@@ -18,7 +18,6 @@ package com.palantir.cassandra.multinode;
 import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
@@ -34,17 +33,23 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import org.hamcrest.Description;
 import org.hamcrest.FeatureMatcher;
 import org.hamcrest.Matcher;
 import org.hamcrest.TypeSafeDiagnosingMatcher;
+import org.junit.After;
 import org.junit.ClassRule;
 import org.junit.Test;
 
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListeningExecutorService;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.palantir.atlasdb.AtlasDbConstants;
 import com.palantir.atlasdb.cassandra.CassandraKeyValueServiceConfig;
 import com.palantir.atlasdb.containers.Containers;
@@ -52,8 +57,6 @@ import com.palantir.atlasdb.containers.ThreeNodeCassandraCluster;
 import com.palantir.atlasdb.keyvalue.api.TableReference;
 import com.palantir.atlasdb.keyvalue.cassandra.CassandraKeyValueService;
 import com.palantir.atlasdb.keyvalue.cassandra.CassandraKeyValueServiceImpl;
-
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 public class CassandraSchemaLockTest {
     private static final int THREAD_COUNT = 4;
@@ -63,38 +66,38 @@ public class CassandraSchemaLockTest {
             .with(new ThreeNodeCassandraCluster());
 
     private final ExecutorService executorService = Executors.newFixedThreadPool(THREAD_COUNT);
+    private final ListeningExecutorService listeningExecutorService = MoreExecutors.listeningDecorator(executorService);
+
+    @After
+    public void tearDown() {
+        executorService.shutdown();
+    }
 
     @Test
     public void shouldCreateTablesConsistentlyWithMultipleCassandraNodes() throws Exception {
         TableReference table1 = TableReference.createFromFullyQualifiedName("ns.table1");
         CassandraKeyValueServiceConfig config = ThreeNodeCassandraCluster.KVS_CONFIG;
 
-        try {
-            CyclicBarrier barrier = new CyclicBarrier(THREAD_COUNT);
-            for (int i = 0; i < THREAD_COUNT; i++) {
-                async(() -> {
-                    CassandraKeyValueService keyValueService =
-                            CassandraKeyValueServiceImpl.createForTesting(config, Optional.empty());
-                    barrier.await();
-                    keyValueService.createTable(table1, AtlasDbConstants.GENERIC_TABLE_METADATA);
-                    return null;
-                });
-            }
-        } finally {
-            executorService.shutdown();
-            assertTrue(executorService.awaitTermination(4, TimeUnit.MINUTES));
-        }
+        CyclicBarrier barrier = new CyclicBarrier(THREAD_COUNT);
+        Callable<Void> createTable = () -> {
+            CassandraKeyValueService keyValueService =
+                    CassandraKeyValueServiceImpl.createForTesting(config, Optional.empty());
+            barrier.await();
+            keyValueService.createTable(table1, AtlasDbConstants.GENERIC_TABLE_METADATA);
+            return null;
+        };
+
+        ListenableFuture<List<Void>> futureForAll = IntStream.range(0, THREAD_COUNT)
+                .mapToObj(unused -> listeningExecutorService.submit(createTable))
+                .collect(Collectors.collectingAndThen(Collectors.toList(), Futures::allAsList));
+
+        futureForAll.get(4, TimeUnit.MINUTES);
 
         CassandraKeyValueService kvs = CassandraKeyValueServiceImpl.createForTesting(config, Optional.empty());
         assertThat(kvs.getAllTableNames(), hasItem(table1));
 
         assertThat(new File(CONTAINERS.getLogDirectory()),
                 containsFiles(everyItem(doesNotContainTheColumnFamilyIdMismatchError())));
-    }
-
-    @SuppressFBWarnings("RV_RETURN_VALUE_IGNORED_BAD_PRACTICE")
-    private void async(Callable callable) {
-        executorService.submit(callable);
     }
 
     private static Matcher<File> containsFiles(Matcher<Iterable<File>> fileMatcher) {
