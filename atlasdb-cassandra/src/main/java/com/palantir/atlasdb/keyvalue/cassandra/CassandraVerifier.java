@@ -322,7 +322,9 @@ public final class CassandraVerifier {
 
     private static void checkRfsSpecified(CassandraKeyValueServiceConfig config, Set<String> dcs,
             Map<String, String> strategyOptions) {
+        System.out.println(String.format("######### strategy options(%s): %s", Thread.currentThread().getName(), strategyOptions));
         for (String datacenter : dcs) {
+            System.out.println(String.format("######### datacenter(%s): %s", Thread.currentThread().getName(), datacenter));
             if (strategyOptions.get(datacenter) == null) {
                 logErrorOrThrow("The datacenter for this cassandra cluster is invalid. "
                         + " failed dc: " + datacenter + "  strategyOptions: " + strategyOptions,
