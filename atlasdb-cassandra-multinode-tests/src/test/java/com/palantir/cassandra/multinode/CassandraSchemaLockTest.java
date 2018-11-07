@@ -80,6 +80,7 @@ public class CassandraSchemaLockTest {
 
         CyclicBarrier barrier = new CyclicBarrier(THREAD_COUNT);
         Callable<Void> createTable = () -> {
+            System.out.println("Creating cassandra key value service...");
             CassandraKeyValueService keyValueService =
                     CassandraKeyValueServiceImpl.createForTesting(config, Optional.empty());
             barrier.await();

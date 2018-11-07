@@ -76,6 +76,7 @@ public final class CassandraVerifier {
         Set<String> hosts = Sets.newHashSet();
         for (TokenRange tokenRange : client.describe_ring(CassandraConstants.SIMPLE_RF_TEST_KEYSPACE)) {
             for (EndpointDetails details : tokenRange.getEndpoint_details()) {
+                System.out.println(String.format("####### endpoint details: %s, - %s", details, Thread.currentThread().getName()));
                 datacenterToRack.put(details.datacenter, details.rack);
                 hosts.add(details.host);
             }
